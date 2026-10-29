@@ -4,14 +4,14 @@
 		<title lang="EN">Jukebox Moods</title>
 	</details>
 	<plugins>
-		<plugin name="JukeboxMoods" version="0.1.7" minTarget="8.0" maxTarget="*">
+		<plugin name="JukeboxMoods" version="0.1.8" minTarget="8.0" maxTarget="*">
 			<title lang="EN">Jukebox Moods</title>
 			<desc lang="EN">Keeps the music playing when the queue runs out, using tag-based moods you can switch on the fly. Works with Don't Stop The Music. Inspired by Silverjuke.</desc>
 			<category>playlists</category>
 			<creator>Dennis Swanepoel</creator>
 			<link>https://github.com/DennisSwanepoel/lms-jukebox-moods</link>
-			<url>https://github.com/DennisSwanepoel/lms-jukebox-moods/releases/download/v0.1.7/JukeboxMoods-0.1.7.zip</url>
-			<sha>90d2a0735272336f677436fdce90bafb102d158f</sha>
+			<url>https://github.com/DennisSwanepoel/lms-jukebox-moods/releases/download/v0.1.8/JukeboxMoods-0.1.8.zip</url>
+			<sha>fbb33d1970bc9e4f85e91bb0a7db4e57b909d1c4</sha>
 		</plugin>
 	</plugins>
 </extensions>
