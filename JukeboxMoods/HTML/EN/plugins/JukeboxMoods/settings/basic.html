@@ -25,7 +25,21 @@
 	.jm-start ol { margin: 8px 0 4px 1.2em; padding: 0; max-width: 52em; }
 	.jm-start li { margin: 4px 0; }
 	.jm-ok { color: var(--jm-ok, #3a9d5d); }
+	.jm-warn { border: 2px solid #d9534f; border-radius: 6px; padding: 8px 12px; margin: 0 0 12px; font-weight: bold; }
+	.jm-saved { margin: 0 0 10px; font-weight: bold; }
+	.jm-loaded { font-size: 85%; opacity: .7; margin-top: 6px; }
+	.jm-slots { border-collapse: collapse; margin: 4px 0 8px 14px; }
+	.jm-slots td, .jm-slots th { padding: 3px 6px; text-align: left; vertical-align: middle; }
+	.jm-slots th { font-weight: normal; opacity: .75; }
+	.jm-minutes { width: 5em; }
+	.jm-times { opacity: .8; white-space: nowrap; }
 </style>
+
+[%# Safety check: an older copy of the server code doesn't supply jm_events %]
+[% UNLESS jm_events.defined %]
+	<div class="jm-warn">The Jukebox Moods code running in LMS is older than this settings page, so events and some settings cannot be saved. Restart LMS, and make sure there is only one JukeboxMoods folder in the plugin folders listed under Settings &gt; Information.</div>
+[% END %]
+[% IF jm_saved %]<div class="jm-ok jm-saved">[% jm_saved | html %]</div>[% END %]
 
 [%# Getting started: open until there is a mood AND a player using it %]
 [% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_START" desc="PLUGIN_JUKEBOXMOODS_START_DESC" %]
@@ -45,14 +59,22 @@
 			<li><strong>Create a mood.</strong> Click <em>Add mood</em>, add one or more rules, check them with <em>Count matching tracks</em>, choose what happens when the mood runs dry, then click <em>Save Settings</em>.</li>
 			<li><strong>Switch it on for each player.</strong> In Material: open the player menu, choose <em>Player settings</em>, then <em>Don't Stop The Music</em>. In the classic web interface: <em>Settings &gt; Player</em>, choose the player, then the <em>Don't Stop The Music</em> page. Select <strong>Jukebox Moods (active mood)</strong> and make sure the player's repeat is off.
 				[% IF jm_inactivePlayers %]<br>Not yet switched on: [% jm_inactivePlayers | html %].[% END %]</li>
+			<li><strong>Optional - events.</strong> Under <em>Events</em>, plan a sequence of moods; start it from <em>My Apps &gt; Jukebox Moods</em> or let it start at a set time.</li>
 			<li><strong>Choose a mood.</strong> Open <em>My Apps &gt; Jukebox Moods</em> and pick a mood. From then on, whenever the queue runs out, tracks from the active mood are added automatically. You can still add or change tracks yourself at any time.</li>
 		</ol>
+		[% IF jm_loaded %]<div class="jm-loaded">Running: [% jm_loaded | html %]</div>[% END %]
 	</details>
 [% END %]
 
 [% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_MOODS" desc="PLUGIN_JUKEBOXMOODS_MOODS_DESC" %]
 	<div id="jm-editor"></div>
 	<input type="hidden" name="profiles_json" id="jm-profiles-json" value="">
+[% END %]
+
+[%# Events: planned sequences of moods (see Events.pm) %]
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_EVENTS" desc="PLUGIN_JUKEBOXMOODS_EVENTS_DESC" %]
+	<div id="jm-events"></div>
+	<input type="hidden" name="events_json" id="jm-events-json" value="">
 [% END %]
 
 [% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_FILETAGS" desc="PLUGIN_JUKEBOXMOODS_FILETAGS_DESC" %]
@@ -90,6 +112,8 @@
 <script type="application/json" id="jm-tags">[% jm_tags %]</script>
 <script type="application/json" id="jm-ops">[% jm_ops %]</script>
 <script type="application/json" id="jm-data">[% jm_profiles %]</script>
+<script type="application/json" id="jm-events-data">[% jm_events %]</script>
+<script type="application/json" id="jm-players">[% jm_players %]</script>
 
 <script>
 /*
@@ -104,6 +128,11 @@
  *   jm-tags    file tags found       [{tag, tracks}]
  *   jm-ops     operators by type     {text: [{op, label}], number: [...], custom: [...]}
  *   jm-data    the saved moods       [{id, name, match, rules, exclude, fallback}]
+ *
+ * The events editor (further down) works the same way, writing the event
+ * list as JSON into "events_json". Its data:
+ *   jm-events-data  saved events     [{id, name, startMode, startAt, player, endAction, changeMode, slots}]
+ *   jm-players      known players    [{id, name}]
  */
 (function () {
 	function readJson(id, fallback) {
@@ -341,6 +370,206 @@
 		return card;
 	}
 
+
+	// ---------------------------------------------------------------- events
+
+	var events  = readJson('jm-events-data', []);
+	var players = readJson('jm-players', []);
+	var evRoot  = document.getElementById('jm-events');
+	var evOut   = document.getElementById('jm-events-json');
+	events.forEach(function (e) { e.slots = e.slots || []; });
+
+	function syncEvents() { if (evOut) evOut.value = JSON.stringify(events); }
+	function pad(n) { return (n < 10 ? '0' : '') + n; }
+	function hhmm(d) { return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+	function span(min) { return Math.floor(min / 60) + ':' + pad(min % 60); }
+	function parseLocal(s) {
+		var m = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)$/.exec(s || '');
+		return m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]) : null;
+	}
+	function newEventId() { return 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+	// Calculated, read-only times for slot i: clock times for a scheduled
+	// event, times relative to the start (+h:mm) for a manual one.
+	function slotTimes(e, i) {
+		var before = 0;
+		for (var k = 0; k < i; k++) before += +e.slots[k].minutes || 0;
+		var min  = +e.slots[i].minutes || 0;
+		var open = (i === e.slots.length - 1 && !min);
+		var start = e.startMode === 'scheduled' ? parseLocal(e.startAt) : null;
+		if (start) {
+			var a = new Date(start.getTime() + before * 60000);
+			var b = new Date(a.getTime() + min * 60000);
+			var next = a.toDateString() !== start.toDateString() ? ' (next day)' : '';
+			return open ? 'from ' + hhmm(a) + next : hhmm(a) + ' - ' + hhmm(b) + next;
+		}
+		return open ? 'from +' + span(before) : '+' + span(before) + ' - +' + span(before + min);
+	}
+
+	function moodSelect(slot) {
+		var s = h('select', { onchange: function () { slot.mood = s.value; syncEvents(); } });
+		var found = false;
+		moods.forEach(function (m) { s.appendChild(option(m.id, m.name || '(unnamed)')); if (m.id === slot.mood) found = true; });
+		if (!found && slot.mood) s.appendChild(option(slot.mood, '(deleted mood)'));
+		if (!slot.mood && moods.length) slot.mood = moods[0].id;
+		s.value = slot.mood || '';
+		return s;
+	}
+
+	function renderSlots(e) {
+		var table = h('table', { class: 'jm-slots' });
+		table.appendChild(h('tr', {}, [h('th', { text: '#' }), h('th', { text: 'Mood' }), h('th', { text: 'Duration' }), h('th', { text: 'Plays' }), h('th', {})]));
+		e.slots.forEach(function (slot, i) {
+			var last = (i === e.slots.length - 1);
+			var mins = h('input', { type: 'number', min: '1', max: '1440', class: 'stdedit jm-minutes' });
+			mins.value = slot.minutes || '';
+			mins.disabled = last && !slot.minutes;
+			mins.addEventListener('input', function () { slot.minutes = Math.max(1, Math.min(1440, parseInt(mins.value, 10) || 1)); syncEvents(); });
+			mins.addEventListener('change', renderEvents);
+
+			var dur = h('td', {}, [mins, ' min']);
+			if (last) {   // only the last slot can run until stopped
+				var open = h('input', { type: 'checkbox' });
+				open.checked = !slot.minutes;
+				open.addEventListener('change', function () { slot.minutes = open.checked ? 0 : 60; renderEvents(); });
+				dur.appendChild(h('label', {}, [' ', open, ' until stopped']));
+			}
+
+			table.appendChild(h('tr', {}, [
+				h('td', { text: String(i + 1) }),
+				h('td', {}, [moodSelect(slot)]),
+				dur,
+				h('td', { class: 'jm-times', text: slotTimes(e, i) }),
+				h('td', {}, [h('button', { type: 'button', text: 'Remove', onclick: function () {
+					e.slots.splice(i, 1);
+					// only the last slot may be "until stopped"
+					e.slots.forEach(function (s, k) { if (k < e.slots.length - 1 && !s.minutes) s.minutes = 60; });
+					renderEvents();
+				} })])
+			]));
+		});
+		return table;
+	}
+
+	function renderEvent(e, i) {
+		var card = h('div', { class: 'jm-mood' });
+
+		var name = h('input', { type: 'text', class: 'jm-name' });
+		name.value = e.name || '';
+		name.addEventListener('input', function () { e.name = name.value; syncEvents(); });
+		card.appendChild(h('div', { class: 'jm-head' }, [
+			name,
+			h('button', { type: 'button', text: 'Up',   onclick: function () { if (i > 0) { events.splice(i - 1, 0, events.splice(i, 1)[0]); renderEvents(); } } }),
+			h('button', { type: 'button', text: 'Down', onclick: function () { if (i < events.length - 1) { events.splice(i + 1, 0, events.splice(i, 1)[0]); renderEvents(); } } }),
+			h('button', { type: 'button', text: 'Duplicate', onclick: function () {
+				var c = JSON.parse(JSON.stringify(e)); c.id = newEventId(); c.name = (c.name || 'Event') + ' (copy)';
+				events.splice(i + 1, 0, c); renderEvents();
+			} }),
+			h('button', { type: 'button', text: 'Delete', onclick: function () {
+				if (window.confirm('Delete the event "' + (e.name || '') + '"?')) { events.splice(i, 1); renderEvents(); }
+			} })
+		]));
+
+		// start: manually, or at a date and time
+		var startSel = h('select', { onchange: function () { e.startMode = startSel.value; renderEvents(); } }, [
+			option('manual', 'Manually, from My Apps > Jukebox Moods'),
+			option('scheduled', 'Automatically at a date and time')
+		]);
+		startSel.value = e.startMode === 'scheduled' ? 'scheduled' : 'manual';
+		var startLine = h('div', { class: 'jm-line' }, ['Start: ', startSel]);
+		if (e.startMode === 'scheduled') {
+			var when = h('input', { type: 'datetime-local', class: 'stdedit' });
+			when.value = e.startAt || '';
+			when.addEventListener('change', function () { e.startAt = when.value; renderEvents(); });
+			startLine.appendChild(document.createTextNode(' '));
+			startLine.appendChild(when);
+			if (!e.startAt) startLine.appendChild(h('span', { class: 'jm-hint', text: ' Choose a date and time, or it will be saved as a manual event.' }));
+		}
+		card.appendChild(startLine);
+
+		// player: a manual event can use "the player I start it from"
+		var playerSel = h('select', { onchange: function () { e.player = playerSel.value; syncEvents(); } });
+		if (e.startMode !== 'scheduled') playerSel.appendChild(option('', 'The player I start it from'));
+		players.forEach(function (p) { playerSel.appendChild(option(p.id, p.name)); });
+		if (e.startMode === 'scheduled' && !e.player && players.length) e.player = players[0].id;
+		playerSel.value = e.player || '';
+		var playerLine = h('div', { class: 'jm-line' }, ['Player: ', playerSel]);
+		if (e.startMode === 'scheduled' && !players.length) playerLine.appendChild(h('span', { class: 'jm-hint', text: playersLoaded
+			? ' No player found. Make sure a player is switched on and connected to LMS, then reload this page.'
+			: ' Looking for players...' }));
+		card.appendChild(playerLine);
+
+		card.appendChild(h('div', { class: 'jm-line' }, ['Moods, in order:']));
+		if (!moods.length) card.appendChild(h('div', { class: 'jm-hint', text: 'Create a mood first.' }));
+		card.appendChild(renderSlots(e));
+		card.appendChild(h('button', { type: 'button', text: 'Add slot', onclick: function () {
+			if (!moods.length) return;
+			var last = e.slots[e.slots.length - 1];
+			if (last && !last.minutes) last.minutes = 60;   // only the last slot may be "until stopped"
+			e.slots.push({ mood: moods[0].id, minutes: 60 });
+			renderEvents();
+		} }));
+
+		var endSel = h('select', { onchange: function () { e.endAction = endSel.value; syncEvents(); } }, [
+			option('picked', 'Go back to the mood I picked before the event'),
+			option('stay',   'Stay on the last mood'),
+			option('stop',   'Stop adding tracks (music stops when the queue ends)')
+		]);
+		endSel.value = e.endAction || 'picked';
+		var lastOpen = e.slots.length && !e.slots[e.slots.length - 1].minutes;
+		card.appendChild(h('div', { class: 'jm-line' }, ['When the event ends: ', endSel,
+			lastOpen ? h('span', { class: 'jm-hint', text: ' (the last slot runs until stopped)' }) : null]));
+
+		var changeSel = h('select', { onchange: function () { e.changeMode = changeSel.value; syncEvents(); } }, [
+			option('songend',   'At the end of the current song'),
+			option('immediate', 'Immediately (skip the playing mood track)')
+		]);
+		changeSel.value = e.changeMode || 'songend';
+		card.appendChild(h('div', { class: 'jm-line' }, ['Change moods: ', changeSel]));
+
+		return card;
+	}
+
+	// Players come from two places: the list Settings.pm put in the page, and
+	// a live "players" query to LMS when the page opens (merged, by id). The
+	// live query keeps the list right even if the page was built before a
+	// player connected.
+	var playersLoaded = false;
+	function loadPlayers() {
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', '/jsonrpc.js');
+		xhr.setRequestHeader('Content-Type', 'application/json');
+		xhr.onload = function () {
+			try {
+				var loop = (JSON.parse(xhr.responseText).result || {}).players_loop || [];
+				loop.forEach(function (p) {
+					if (!p.playerid) return;
+					var known = players.filter(function (q) { return q.id === p.playerid; })[0];
+					if (known) known.name = p.name || known.name;
+					else players.push({ id: p.playerid, name: p.name || p.playerid });
+				});
+				players.sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
+			} catch (e) { /* keep the list from the page */ }
+			playersLoaded = true;
+			renderEvents();
+		};
+		xhr.onerror = function () { playersLoaded = true; renderEvents(); };
+		xhr.send(JSON.stringify({ id: 1, method: 'slim.request', params: ['', ['players', 0, 100]] }));
+	}
+
+	function renderEvents() {
+		if (!evRoot) return;
+		evRoot.innerHTML = '';
+		if (!events.length) evRoot.appendChild(h('p', { text: 'No events yet.' }));
+		events.forEach(function (e, i) { evRoot.appendChild(renderEvent(e, i)); });
+		evRoot.appendChild(h('button', { type: 'button', text: 'Add event', onclick: function () {
+			events.push({ id: newEventId(), name: 'New event', startMode: 'manual', startAt: '', player: '',
+				endAction: 'picked', changeMode: 'songend', slots: moods.length ? [{ mood: moods[0].id, minutes: 60 }] : [] });
+			renderEvents();
+		} }));
+		syncEvents();
+	}
+
 	// Redraw the whole editor (simple and fast enough for a handful of moods)
 	function render() {
 		root.innerHTML = '';
@@ -352,9 +581,11 @@
 		} }));
 		root.appendChild(h('p', { class: 'jm-hint', text: 'Changes are kept when you save this page.' }));
 		sync();
+		renderEvents();
 	}
 
 	render();
+	loadPlayers();
 })();
 </script>
 

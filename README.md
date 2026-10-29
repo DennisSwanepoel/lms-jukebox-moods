@@ -13,6 +13,7 @@ Inspired by Silverjuke; not affiliated with the Silverjuke project. Requires LMS
 - **Switch moods on the fly** from *My Apps > Jukebox Moods* in the web interface, Material Skin or controller apps, or from the CLI.
 - **Fallbacks.** When a mood runs dry it can switch to another mood, or choose **Don't Stop the Music** (go back to the mood you picked and keep playing, with repeats if needed; the default), **Restart Current Mood** (replay the mood that's playing), **Song Mix** (random tracks from the whole library) or **Do Nothing** (stop when the queue ends).
 - **Repeat protection** (optional): skip tracks played within the last N minutes.
+- **Events:** plan a sequence of moods for a party or a whole day, for example Chilled for 120 minutes, Braai for 60, then Party until stopped. Start an event from My Apps or let it start at a date and time; guest requests, fallbacks and manual mood changes keep working throughout.
 
 ## Installation
 
@@ -49,11 +50,18 @@ The mood you pick in My Apps stays your choice: fallbacks only change which mood
 
 A mood runs dry when all its matching tracks are already in the playlist (played or upcoming), are blocked by repeat protection, or nothing matches. LMS never adds a track that is already in the playlist, so "keep playing this mood" removes earlier, already-played copies before re-queuing them.
 
+### Events
+
+Create events under *Events* on the settings page. Each event is a list of moods with a duration in minutes; the last one can run *until stopped*. The page shows the resulting times. An event starts either manually (*My Apps > Jukebox Moods > Event: ... > Start now*) or automatically at a date and time on a chosen player, which is switched on and starts playing.
+
+While an event runs, the menu shows the current mood and when it ends, plus *Next slot* and *Stop event*. Picking a mood by hand plays until the next slot change. At the end, the event goes back to the mood you had picked before it, stays on its last mood, or stops adding tracks, as you choose. Events carry on after an LMS restart, using the clock to find the right slot.
+
 ### CLI and JSON-RPC
 
 ```
 <playerid> jukeboxmoods moods
 <playerid> jukeboxmoods activate mood:Braai mode:replace     (modes: queue, replace, play)
+<playerid> jukeboxmoods event cmd:start event:Birthday      (cmd: start, next, stop, cancel)
 jukeboxmoods count profile:<mood as JSON>
 jukeboxmoods reindex
 ```
@@ -81,8 +89,10 @@ JukeboxMoods/                 the plugin (this folder is what LMS loads)
   Plugin.pm                   entry point: DSTM provider, mood switching, menu, CLI
   Selector.pm                 rule engine: rules -> SQL -> track sets -> random pick
   TagIndex.pm                 reads extra file tags into its own SQLite index
+  Events.pm                   events: planned sequences of moods, manual or scheduled
   Settings.pm                 settings page handler
   HTML/EN/plugins/JukeboxMoods/settings/basic.html   settings page and mood editor
+  HTML/EN/plugins/JukeboxMoods/html/images/          menu icon (icon.png, SVG source icon.svg)
 build.ps1, build.sh           build the plugin zip and repo.xml (Windows / Linux, macOS)
 CHANGELOG.md, LICENSE
 ```

@@ -93,3 +93,42 @@ PLUGIN_JUKEBOXMOODS_SCAN_LABEL
 
 PLUGIN_JUKEBOXMOODS_REINDEX
 	EN	Rebuild the whole tag index when I save
+
+PLUGIN_JUKEBOXMOODS_EVENTS
+	EN	Events
+
+PLUGIN_JUKEBOXMOODS_EVENTS_DESC
+	EN	An event plans a sequence of moods, for example Chilled for 120 minutes, then Braai for 60, then Party until stopped. Start it manually from My Apps > Jukebox Moods, or let it start at a date and time. While it runs, all mood rules, fallbacks and guest requests work as normal; the event only changes the mood when each slot's time is up. Picking a mood by hand plays until the next slot change. "When the event ends" decides what follows the last slot, and "Change moods" whether the current song finishes first or a mood track is skipped straight away (guest requests are never cut).
+
+PLUGIN_JUKEBOXMOODS_EVENT_ITEM
+	EN	Event: %s
+
+PLUGIN_JUKEBOXMOODS_EVENT_STATUS
+	EN	Event: %s - %s %s
+
+PLUGIN_JUKEBOXMOODS_UNTIL
+	EN	until %s
+
+PLUGIN_JUKEBOXMOODS_UNTIL_STOPPED
+	EN	until stopped
+
+PLUGIN_JUKEBOXMOODS_START_EVENT
+	EN	Start now
+
+PLUGIN_JUKEBOXMOODS_NEXT_SLOT
+	EN	Next slot
+
+PLUGIN_JUKEBOXMOODS_STOP_EVENT
+	EN	Stop event
+
+PLUGIN_JUKEBOXMOODS_CANCEL_EVENT
+	EN	Cancel the scheduled start
+
+PLUGIN_JUKEBOXMOODS_DONE
+	EN	Done
+
+PLUGIN_JUKEBOXMOODS_NOTHING_TO_DO
+	EN	Nothing to do
+
+PLUGIN_JUKEBOXMOODS_STOPPED_ADDING
+	EN	Not adding tracks: the last event ended with "Stop". Pick a mood to continue.

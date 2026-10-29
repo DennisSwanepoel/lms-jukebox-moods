@@ -2,6 +2,19 @@
 
 All notable changes to Jukebox Moods. Versions follow `<version>` in `JukeboxMoods/install.xml`.
 
+## 0.2.0
+- Events: plan a sequence of moods, each with a duration in minutes (the last can run until stopped), for example Chilled 120 min, then Braai 60 min, then Party until stopped.
+- Start an event manually from My Apps > Jukebox Moods, or automatically at a date and time (the player is powered on and starts playing). A late start joins at the slot that is current; "Start now" on a scheduled event starts it immediately.
+- While an event runs, My Apps shows the current slot and when it ends, with Next slot and Stop event. Scheduled events can be cancelled from the menu.
+- When an event ends: go back to the mood picked before it, stay on the last mood, or stop adding tracks. Mood changes happen at the end of the current song, or immediately (skipping a playing mood track, never a guest request).
+- The event editor's player list is read live from LMS when the settings page opens.
+- Mood changes (events and "Switch now") place the new mood's tracks straight after the current song and any guest requests, ahead of an old mood track LMS may already be loading. The plugin's memory of the tracks it queued now survives an LMS restart.
+- Fix: removing queued mood tracks used a track address where LMS expects a playlist position, so the wrong entries were removed (affected "Switch now", event slot changes and "Restart Current Mood").
+- Events survive an LMS restart and can run past midnight. New CLI command: `jukeboxmoods event cmd:start|next|stop|cancel event:<name>`.
+
+## 0.1.8
+- Jukebox icon for the My Apps menu (web interface, Material Skin, Jivelite and Squeezebox controllers) and the plugin list. SVG source included in html/images.
+
 ## 0.1.7
 - Fallback options renamed and explained in the Moods help bubble: Don't Stop the Music (back to the mood you picked), Restart Current Mood, Song Mix, Do Nothing, or any other mood.
 - Song Mix is now provided by the plugin (random tracks from the whole library).

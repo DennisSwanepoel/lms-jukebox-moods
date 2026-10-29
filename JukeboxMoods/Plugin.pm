@@ -16,11 +16,13 @@ package Plugins::JukeboxMoods::Plugin;
 #     fallback chain when it runs dry
 #   * the "Jukebox Moods" entry in My Apps for switching moods on the fly
 #   * CLI / JSON-RPC commands (jukeboxmoods ...)
+#   * menu entries and commands for events (the engine itself is Events.pm)
 #   * validating mood definitions coming from the settings page
 #
 # Related modules:
 #   Selector.pm  - turns a mood's rules into a set of tracks and picks from it
 #   TagIndex.pm  - reads extra file tags (MOOD, GROUPING, ...) into its own index
+#   Events.pm    - events: planned sequences of moods, started manually or on a schedule
 #   Settings.pm  - the settings page handler (HTML in HTML/EN/plugins/...)
 #
 # Terminology: in the code a mood is called a "profile"; the user interface
@@ -34,6 +36,7 @@ use base qw(Slim::Plugin::OPMLBased);
 
 use Scalar::Util qw(blessed);
 use List::Util qw(max);
+use POSIX ();
 use JSON::XS::VersionOneAndTwo;
 
 use Slim::Control::Request;
@@ -41,6 +44,7 @@ use Slim::Utils::Log;
 use Slim::Utils::Prefs;
 use Slim::Utils::Strings qw(string cstring);
 
+use Plugins::JukeboxMoods::Events;
 use Plugins::JukeboxMoods::Selector;
 use Plugins::JukeboxMoods::TagIndex;
 
@@ -116,8 +120,10 @@ unless ($prefs->get('migratedSongMixFallback')) {
 	$prefs->set('migratedSongMixFallback', 1);
 }
 
-# Per-player memory of tracks this plugin queued: lets "switch now" remove
-# them, and lets repeat protection cover queued-but-unplayed tracks.
+# Per-player memory of tracks this plugin queued: url => { t => time queued,
+# mood => mood id }. It lets mood changes remove them (guest requests are never
+# touched), and lets repeat protection cover queued-but-unplayed tracks. Kept in
+# a player preference ("queuedTracks") so it survives an LMS restart.
 my %session;
 
 # Called by LMS once at start-up. Wires the plugin into LMS: settings page,
@@ -132,6 +138,7 @@ sub initPlugin {
 	}
 
 	Plugins::JukeboxMoods::TagIndex->init;
+	Plugins::JukeboxMoods::Events->init;
 
 	Slim::Control::Request::subscribe(\&_onRescanDone, [['rescan'], ['done']]);
 
@@ -149,7 +156,10 @@ sub initPlugin {
 	Slim::Control::Request::addDispatch(['jukeboxmoods', 'activate'], [1, 0, 1, \&cliActivate]);
 	Slim::Control::Request::addDispatch(['jukeboxmoods', 'count'],    [0, 1, 1, \&cliCount]);
 	Slim::Control::Request::addDispatch(['jukeboxmoods', 'reindex'],  [0, 0, 0, \&cliReindex]);
+	Slim::Control::Request::addDispatch(['jukeboxmoods', 'event'],    [1, 0, 1, \&cliEvent]);
 
+	# The menu icon comes from <icon> in install.xml
+	# (HTML/EN/plugins/JukeboxMoods/html/images/icon.png).
 	$class->SUPER::initPlugin(
 		feed   => \&handleFeed,
 		tag    => 'jukeboxmoods',
@@ -173,6 +183,7 @@ sub _migrateDstmProvider {
 sub shutdownPlugin {
 	Slim::Control::Request::unsubscribe(\&_onRescanDone);
 	Plugins::JukeboxMoods::TagIndex->shutdown;
+	Plugins::JukeboxMoods::Events->shutdown;
 }
 
 # Name shown for the My Apps menu entry (a strings.txt token).
@@ -264,6 +275,12 @@ sub pickForClient {
 	my ($client, $count, %opts) = @_;
 	$client = $client->master;
 
+	# an event that ended with "Stop" asks for nothing more until a mood is picked
+	if ($opts{dstm} && $prefs->client($client)->get('stopAdding')) {
+		$log->info('Not adding tracks for ' . $client->name . ': the event ended with "stop"');
+		return [];
+	}
+
 	my $start = $opts{profile} || activeProfile($client) or return [];
 
 	# LMS never adds a track that is already anywhere in the playlist (played
@@ -331,7 +348,7 @@ sub pickForClient {
 			push @diag, 'Song Mix: ' . scalar(@$urls) . ' track(s)';
 			if (@$urls) {
 				$log->info('Picked ' . scalar(@$urls) . ' Song Mix track(s). ' . join('; ', @diag));
-				_remember($client, $urls);
+				_remember($client, $urls, 'songmix');
 				return $urls;
 			}
 			last;
@@ -371,7 +388,7 @@ sub _useTracks {
 		$log->info("Fell back to mood '$mood->{name}'");
 	}
 	$log->info('Picked ' . scalar(@$urls) . ' track(s). ' . join('; ', @$diag));
-	_remember($client, $urls);
+	_remember($client, $urls, $mood->{id});
 	return $urls;
 }
 
@@ -384,10 +401,9 @@ sub _repeatFromMood {
 	my $urls = Plugins::JukeboxMoods::Selector->pick($profile, $count, { exclude => { %$upcoming }, ignoreRepeat => 1 });
 	return $urls if $ignoreQueue || !@$urls;
 
-	my $inPlaylist = _playlistUrls($client);
-	for my $url (@$urls) {
-		$client->execute(['playlist', 'delete', $url]) if $inPlaylist->{$url} && !$upcoming->{$url};
-	}
+	my %chosen = map { $_ => 1 } grep { !$upcoming->{$_} } @$urls;
+	my ($list, $current) = _playlistState($client);
+	_deleteIndexes($client, grep { my $u = _urlOf($list->[$_]); defined $u && $chosen{$u} } (0 .. $current - 1));
 	return $urls;
 }
 
@@ -417,6 +433,7 @@ sub switchMood {
 	$mode ||= 'queue';
 
 	setChosen($client, $profile);
+	$prefs->client($client)->set('stopAdding', 0);   # picking a mood always resumes adding tracks
 	my $count = $prefs->get('tracksPerTopup') || 2;
 
 	if ($mode eq 'play') {
@@ -431,6 +448,7 @@ sub switchMood {
 		_removeQueuedMoodTracks($client);
 		my $urls = pickForClient($client, $count, profile => $profile);
 		$client->execute(['playlist', 'add', $_]) for @$urls;
+		_placeNext($client, $urls);
 		return @$urls ? 1 : 0;
 	}
 
@@ -454,6 +472,14 @@ sub _playlistState {
 }
 
 # Set (hash ref) of every URL in the playlist, played or upcoming.
+# True if the song now playing was queued by this plugin (not a guest request).
+sub currentIsMoodTrack {
+	my $client = shift->master;
+	my ($list, $current) = _playlistState($client);
+	my $url = _urlOf($list->[$current]);
+	return defined $url && _queued($client)->{$url} ? 1 : 0;
+}
+
 sub _playlistUrls {
 	my $client = shift;
 	my ($list) = _playlistState($client);
@@ -480,44 +506,126 @@ sub _upcomingUrls {
 # Set of URLs this plugin queued for the player within the repeat window.
 sub _recentUrls {
 	my $client = shift;
-	my $since = time() - ($prefs->get('repeatMinutes') || 60) * 60;
-	my $added = $session{ $client->id }{added} ||= {};
-	return { map { $_ => 1 } grep { $added->{$_} >= $since } keys %$added };
+	my $since  = time() - ($prefs->get('repeatMinutes') || 60) * 60;
+	my $queued = _queued($client);
+	return { map { $_ => 1 } grep { _queuedAt($queued->{$_}) >= $since } keys %$queued };
 }
 
-# Record URLs this plugin has just queued for the player (session memory).
+# This player's memory of tracks the plugin queued (loaded from its preference
+# the first time it is needed after a restart).
+sub _queued {
+	my $client = shift->master;
+	my $id = $client->id;
+	unless ($session{$id}{added}) {
+		my $saved = $prefs->client($client)->get('queuedTracks');
+		$session{$id}{added} = ref $saved eq 'HASH' ? { %$saved } : {};
+	}
+	return $session{$id}{added};
+}
+
+sub _saveQueued {
+	my $client = shift->master;
+	$prefs->client($client)->set('queuedTracks', { %{ _queued($client) } });
+}
+
+# When a remembered track was queued.
+sub _queuedAt { my $v = shift; return ref $v ? ($v->{t} || 0) : ($v || 0) }
+
+# Record URLs this plugin has just queued for the player, and from which mood.
 sub _remember {
-	my ($client, $urls) = @_;
-	my $now   = time();
-	my $added = $session{ $client->id }{added} ||= {};
-	$added->{$_} = $now for @$urls;
+	my ($client, $urls, $moodId) = @_;
+	my $now    = time();
+	my $queued = _queued($client);
+	$queued->{$_} = { t => $now, mood => $moodId || '' } for @$urls;
 
 	# keep memory bounded: forget entries older than the protection window (min 12h)
 	my $keep = max(12 * 60, $prefs->get('repeatMinutes') || 60) * 60;
-	delete $added->{$_} for grep { $added->{$_} < $now - $keep } keys %$added;
+	delete $queued->{$_} for grep { _queuedAt($queued->{$_}) < $now - $keep } keys %$queued;
+	_saveQueued($client);
+}
+
+# Remove playlist entries by position. LMS's "playlist delete" takes an index
+# (not a URL); deleting from the highest index down keeps the others valid.
+sub _deleteIndexes {
+	my ($client, @idx) = @_;
+	my %seen;
+	$client->execute(['playlist', 'delete', $_]) for sort { $b <=> $a } grep { !$seen{$_}++ } @idx;
 }
 
 # Remove upcoming tracks that this plugin queued, leaving the user's own
-# tracks alone. Used by "Switch now (replace queued mood tracks)".
+# tracks alone. Used when the mood changes ("Switch now" and event slots).
 sub _removeQueuedMoodTracks {
 	my $client = shift;
-	my $added = $session{ $client->id }{added} || {};
-	return unless %$added;
+	my $queued = _queued($client);
 
 	my ($list, $current) = _playlistState($client);
 	my $currentUrl = _urlOf($list->[$current]);
 
-	my %remove;
+	my (%remove, @indexes, $guests);
 	for my $i ($current + 1 .. $#$list) {
 		my $url = _urlOf($list->[$i]);
-		next unless defined $url && $added->{$url};
-		next if defined $currentUrl && $url eq $currentUrl;
-		$remove{$url} = 1;
+		next unless defined $url;
+		if ($queued->{$url} && !(defined $currentUrl && $url eq $currentUrl)) { $remove{$url} = 1; push @indexes, $i }
+		else { $guests++ }
 	}
 
+	_deleteIndexes($client, @indexes);
+
+	# forget only what really left the queue: a track LMS kept (e.g. one it was
+	# already loading) stays known as a mood track, so the new mood goes before it
+	my ($after) = _playlistState($client);
+	my %still = map { (_urlOf($_) // '') => 1 } @$after;
+	my $removed = 0;
 	for my $url (keys %remove) {
-		$client->execute(['playlist', 'delete', $url]);
-		delete $added->{$url};
+		next if $still{$url};
+		delete $queued->{$url};
+		$removed++;
+	}
+	_saveQueued($client);
+	$log->info(sprintf('Mood change on %s: removed %d of %d queued mood track(s), kept %d guest request(s)',
+		$client->name, $removed, scalar(keys %remove), $guests || 0));
+}
+
+# Move freshly added mood tracks (appended at the end of the playlist) so they
+# play straight after the current song and any guest requests behind it -
+# ahead of any old mood track LMS kept (for example one it had already started
+# loading for gapless playback).
+sub _placeNext {
+	my ($client, $urls) = @_;
+	return unless @$urls;
+	my %new = map { $_ => 1 } @$urls;
+	my $queued = _queued($client);
+
+	my ($list, $current) = _playlistState($client);
+	my $target = $current;   # the last guest request after the current song, if any
+	for my $i ($current + 1 .. $#$list) {
+		my $url = _urlOf($list->[$i]);
+		next unless defined $url;
+		$target = $i if !$new{$url} && !$queued->{$url};
+	}
+
+	my $k = 0;
+	for my $url (@$urls) {
+		($list, $current) = _playlistState($client);
+		my ($from) = grep { (_urlOf($list->[$_]) // '') eq $url } reverse($current + 1 .. $#$list);
+		my $to = $target + 1 + $k++;
+		$client->execute(['playlist', 'move', $from, $to]) if defined $from && $from != $to;
+	}
+
+	# Earlier mood tracks LMS kept are now behind the new mood, so it is no
+	# longer loading them: try removing them once more.
+	($list, $current) = _playlistState($client);
+	my @leftIdx = grep { my $u = _urlOf($list->[$_]); defined $u && !$new{$u} && $queued->{$u} } ($current + 1 .. $#$list);
+	my @left    = map { _urlOf($list->[$_]) } @leftIdx;
+	if (@left) {
+		_deleteIndexes($client, @leftIdx);
+		($list) = _playlistState($client);
+		my %still = map { (_urlOf($_) // '') => 1 } @$list;
+		for my $url (@left) {
+			if ($still{$url}) { $log->warn('Mood change on ' . $client->name . ": LMS kept an earlier mood track: $url") }
+			else              { delete $queued->{$url} }
+		}
+		_saveQueued($client);
 	}
 }
 
@@ -550,19 +658,60 @@ sub handleFeed {
 		return $cb->({ items => [{ name => cstring($client, 'PLUGIN_JUKEBOXMOODS_NO_MOODS'), type => 'text' }] });
 	}
 
-	my $active = activeProfile($client);
-	my $chosen = chosenProfile($client);
-	my $status = sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_ACTIVE_IS'), $active ? $active->{name} : '-');
-	# after a fallback, also show the mood the user picked
-	$status .= ' ' . sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_PICKED'), $chosen->{name})
-		if $active && $chosen && $active->{id} ne $chosen->{id};
-	my @items = ({ name => $status, type => 'text' });
+	my @items;
+	my ($event, $slot, $state) = Plugins::JukeboxMoods::Events::running($client);
+
+	if ($event && $slot >= 0 && $slot < @{ $event->{slots} }) {
+		# status of the running event, with quick controls
+		my $mood = profileById($event->{slots}[$slot]{mood});
+		my $end  = Plugins::JukeboxMoods::Events::slotEnd($event, $state->{startedAt}, $slot);
+		push @items, { type => 'text', name => sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_EVENT_STATUS'),
+			$event->{name}, $mood ? $mood->{name} : '?',
+			$end ? sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_UNTIL'), Plugins::JukeboxMoods::Events::clock($end)) : cstring($client, 'PLUGIN_JUKEBOXMOODS_UNTIL_STOPPED')) };
+		push @items, _eventAction($client, $event, 'next', 'PLUGIN_JUKEBOXMOODS_NEXT_SLOT');
+		push @items, _eventAction($client, $event, 'stop', 'PLUGIN_JUKEBOXMOODS_STOP_EVENT');
+	}
+	else {
+		my $active = activeProfile($client);
+		my $chosen = chosenProfile($client);
+		my $status = sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_ACTIVE_IS'), $active ? $active->{name} : '-');
+		# after a fallback, also show the mood the user picked
+		$status .= ' ' . sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_PICKED'), $chosen->{name})
+			if $active && $chosen && $active->{id} ne $chosen->{id};
+		push @items, { name => $status, type => 'text' };
+		push @items, { name => cstring($client, 'PLUGIN_JUKEBOXMOODS_STOPPED_ADDING'), type => 'text' }
+			if $prefs->client($client->master)->get('stopAdding');
+	}
 
 	my $provider = eval { preferences('plugin.dontstopthemusic')->client($client->master)->get('provider') };
 	if (defined $provider && $provider ne DSTM_TOKEN) {
 		push @items, { name => cstring($client, 'PLUGIN_JUKEBOXMOODS_DSTM_TIP'), type => 'text' };
 	}
 
+	# events: one entry each, opening Start now / Cancel and the slot list
+	for my $e (@{ Plugins::JukeboxMoods::Events::events() }) {
+		next unless @{ $e->{slots} || [] };
+		my $isRunning = $event && $event->{id} eq $e->{id};
+		my $pending   = Plugins::JukeboxMoods::Events::isPending($e);
+		my $label = sprintf(cstring($client, 'PLUGIN_JUKEBOXMOODS_EVENT_ITEM'), $e->{name});
+		$label .= ' (' . _when($e) . ')' if $pending;
+		$label .= ' ' . cstring($client, 'PLUGIN_JUKEBOXMOODS_ACTIVE_MARK') if $isRunning;
+
+		my @sub = $isRunning
+			? (_eventAction($client, $e, 'next', 'PLUGIN_JUKEBOXMOODS_NEXT_SLOT'), _eventAction($client, $e, 'stop', 'PLUGIN_JUKEBOXMOODS_STOP_EVENT'))
+			: (_eventAction($client, $e, 'start', 'PLUGIN_JUKEBOXMOODS_START_EVENT'));
+		push @sub, _eventAction($client, $e, 'cancel', 'PLUGIN_JUKEBOXMOODS_CANCEL_EVENT') if $pending;
+		my $n = 0;
+		for my $s (@{ $e->{slots} }) {
+			my $m = profileById($s->{mood});
+			push @sub, { type => 'text', name => sprintf('%d. %s - %s', ++$n, $m ? $m->{name} : '?',
+				$s->{minutes} ? "$s->{minutes} min" : cstring($client, 'PLUGIN_JUKEBOXMOODS_UNTIL_STOPPED')) };
+		}
+		push @items, { name => $label, type => 'link', items => \@sub };
+	}
+
+	# moods, with the three switching actions
+	my $active = activeProfile($client);
 	for my $p (@$profiles) {
 		my $isActive = $active && $active->{id} eq $p->{id};
 		push @items, {
@@ -577,6 +726,45 @@ sub handleFeed {
 	}
 
 	$cb->({ items => \@items });
+}
+
+# Short start description for a scheduled event, e.g. "Sat 14:00".
+sub _when {
+	my $e = shift;
+	my $t = Plugins::JukeboxMoods::Events::parseStart($e->{startAt}) or return '';
+	return POSIX::strftime('%a %d %b %H:%M', localtime($t));
+}
+
+# One event action item for the menu (start, next, stop, cancel).
+sub _eventAction {
+	my ($client, $event, $do, $token) = @_;
+	return {
+		name        => cstring($client, $token),
+		type        => 'link',
+		url         => \&_eventMenuAction,
+		passthrough => [{ id => $event->{id}, do => $do }],
+		nextWindow  => $do eq 'start' ? 'nowPlaying' : 'grandparent',
+	};
+}
+
+sub _eventMenuAction {
+	my ($client, $cb, $params, $args) = @_;
+	my $event = Plugins::JukeboxMoods::Events::eventById($args->{id});
+	my $ok = $event && runEventCommand($client, $event, $args->{do});
+	$cb->({ items => [{ name => cstring($client, $ok ? 'PLUGIN_JUKEBOXMOODS_DONE' : 'PLUGIN_JUKEBOXMOODS_NOTHING_TO_DO'), type => 'text', showBriefly => 1 }] });
+}
+
+# Carry out an event command for the menu and CLI: start | next | stop | cancel.
+# A manual event without a fixed player runs on the player it is started from;
+# otherwise on its configured player when that is connected.
+sub runEventCommand {
+	my ($client, $event, $do) = @_;
+	my $target = ($event->{player} && Slim::Player::Client::getClient($event->{player})) || $client;
+	return Plugins::JukeboxMoods::Events->start($target, $event) if $do eq 'start';
+	return Plugins::JukeboxMoods::Events->nextSlot($client)      if $do eq 'next';
+	return Plugins::JukeboxMoods::Events->stop($client)          if $do eq 'stop';
+	return Plugins::JukeboxMoods::Events->cancel($event)         if $do eq 'cancel';
+	return 0;
 }
 
 # One switching action item for the menu (see switchMood for the modes).
@@ -652,6 +840,23 @@ sub cliCount {
 }
 
 # jukeboxmoods reindex  - re-read every file's tags (forced index rebuild).
+# <player> jukeboxmoods event cmd:start|next|stop|cancel [event:<name or id>]
+# (start and cancel need event:, next and stop act on the player's running event)
+sub cliEvent {
+	my $request = shift;
+	my $client  = $request->client;
+	my $do      = $request->getParam('cmd') || '';
+	my $event   = Plugins::JukeboxMoods::Events::findEvent($request->getParam('event'));
+	($event) = Plugins::JukeboxMoods::Events::running($client) if !$event && $client && $do =~ /^(?:next|stop)$/;
+
+	if (!$client || !$event || $do !~ /^(?:start|next|stop|cancel)$/) {
+		$request->setStatusBadParams;
+		return;
+	}
+	$request->addResult('ok', runEventCommand($client, $event, $do) ? 1 : 0);
+	$request->setStatusDone;
+}
+
 sub cliReindex {
 	my $request = shift;
 	Plugins::JukeboxMoods::TagIndex->start(1);

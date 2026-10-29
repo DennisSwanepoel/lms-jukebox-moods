@@ -56,6 +56,21 @@ sub handler {
 				$params->{warning} .= 'The mood editor data could not be read, so moods were not changed. ';
 			}
 		}
+		# events: validated against the moods as just saved
+		if (defined $params->{events_json} && length $params->{events_json}) {
+			my $data = Plugins::JukeboxMoods::Plugin::decodeJson($params->{events_json});
+			if (ref $data eq 'ARRAY') {
+				my %moodIds = map { $_->{id} => 1 } @{ $prefs->get('profiles') || [] };
+				my @events = map { Plugins::JukeboxMoods::Events::sanitiseEvent($_, \%moodIds) } grep { ref $_ eq 'HASH' } @$data;
+				$prefs->set('events', \@events);
+				$params->{jm_saved} = sprintf('Saved %d mood(s) and %d event(s).', scalar @{ $prefs->get('profiles') || [] }, scalar @events);
+				Slim::Utils::Log::logger('plugin.jukeboxmoods')->info($params->{jm_saved});
+			}
+			else {
+				$params->{warning} .= 'The event editor data could not be read, so events were not changed. ';
+			}
+		}
+
 		Plugins::JukeboxMoods::TagIndex->start(1) if $params->{reindex};
 	}
 
@@ -64,6 +79,25 @@ sub handler {
 	$params->{jm_tags}   = _scriptJson([ map { { tag => $_->[0], tracks => $_->[1] } } @{ Plugins::JukeboxMoods::TagIndex->discoveredTags } ]);
 	$params->{jm_ops}      = _scriptJson(Plugins::JukeboxMoods::Selector->operators);
 	$params->{jm_profiles} = _scriptJson($prefs->get('profiles') || []);
+	$params->{jm_events}   = _scriptJson($prefs->get('events') || []);
+
+	# players for the event editor: connected ones, plus any an event names
+	my (%players, @players);
+	eval { $players{ $_->id } = $_->name for Slim::Player::Client::clients() };
+	for my $e (@{ $prefs->get('events') || [] }) {
+		$players{ $e->{player} } ||= "$e->{player} (not connected)" if $e->{player};
+	}
+	push @players, { id => $_, name => $players{$_} } for sort { lc $players{$a} cmp lc $players{$b} } keys %players;
+	$params->{jm_players} = _scriptJson(\@players);
+
+	# Which copy of the plugin's server code is running, shown on the page.
+	# If the page is newer than the running code (files replaced without an
+	# LMS restart, or a second copy in another plugin folder), the template
+	# notices that jm_events is missing and shows a warning instead.
+	eval {
+		my $data = Slim::Utils::PluginManager->dataForPlugin('Plugins::JukeboxMoods::Plugin') || {};
+		$params->{jm_loaded} = 'Version ' . ($data->{version} || '?') . ($data->{basedir} ? " from $data->{basedir}" : '');
+	};
 
 	# "Getting started" box: which connected players already use Jukebox Moods
 	# for Don't Stop The Music (the DSTM plugin keeps its choice in the
