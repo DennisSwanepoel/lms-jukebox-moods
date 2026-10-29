@@ -1,0 +1,361 @@
+[% PROCESS settings/header.html %]
+[%#
+	Jukebox Moods settings page.
+	Part of Jukebox Moods. Licensed under the GNU GPL v2 or later (see LICENSE).
+
+	Layout: Getting started (collapsible), Moods (JavaScript editor),
+	Additional file tags, then the playback settings. Simple preferences use
+	fields named pref_<name>, which Slim::Web::Settings loads and saves. The
+	mood editor writes the whole mood list as JSON into the hidden field
+	"profiles_json", which Settings.pm validates and stores.
+%]
+
+<style>
+	.jm-mood { border: 1px solid rgba(128,128,128,.45); border-radius: 6px; padding: 10px 12px; margin: 0 0 12px; }
+	.jm-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+	.jm-name { flex: 1 1 200px; font-weight: bold; }
+	.jm-line { margin: 6px 0; }
+	.jm-rules { margin: 4px 0 8px 14px; }
+	.jm-rule { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+	.jm-value { width: 12em; }
+	.jm-result, .jm-hint { opacity: .8; }
+	.jm-hint { font-size: 90%; }
+	.jm-status { margin-top: 6px; }
+	.jm-start summary { cursor: pointer; font-weight: bold; }
+	.jm-start ol { margin: 8px 0 4px 1.2em; padding: 0; max-width: 52em; }
+	.jm-start li { margin: 4px 0; }
+	.jm-ok { color: var(--jm-ok, #3a9d5d); }
+</style>
+
+[%# Getting started: open until there is a mood AND a player using it %]
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_START" desc="PLUGIN_JUKEBOXMOODS_START_DESC" %]
+	<details class="jm-start" [% UNLESS jm_hasMoods && jm_activePlayers %]open[% END %]>
+		<summary>
+			[% IF jm_activePlayers %]
+				<span class="jm-ok">Active on: [% jm_activePlayers | html %].</span>
+			[% ELSIF jm_playerCount %]
+				Not switched on for any player yet - see step 3.
+			[% ELSE %]
+				No player is connected to LMS yet - start a player first.
+			[% END %]
+			Show setup steps
+		</summary>
+		<ol>
+			<li><strong>Optional - your own file tags.</strong> To build moods on tags such as MOOD, ENERGY or GROUPING, tick <em>Scan additional tags from my music files</em> below, save, and reload this page when the scan has finished.</li>
+			<li><strong>Create a mood.</strong> Click <em>Add mood</em>, add one or more rules, check them with <em>Count matching tracks</em>, choose what happens when the mood runs dry, then click <em>Save Settings</em>.</li>
+			<li><strong>Switch it on for each player.</strong> In Material: open the player menu, choose <em>Player settings</em>, then <em>Don't Stop The Music</em>. In the classic web interface: <em>Settings &gt; Player</em>, choose the player, then the <em>Don't Stop The Music</em> page. Select <strong>Jukebox Moods (active mood)</strong> and make sure the player's repeat is off.
+				[% IF jm_inactivePlayers %]<br>Not yet switched on: [% jm_inactivePlayers | html %].[% END %]</li>
+			<li><strong>Choose a mood.</strong> Open <em>My Apps &gt; Jukebox Moods</em> and pick a mood. From then on, whenever the queue runs out, tracks from the active mood are added automatically. You can still add or change tracks yourself at any time.</li>
+		</ol>
+	</details>
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_MOODS" desc="PLUGIN_JUKEBOXMOODS_MOODS_DESC" %]
+	<div id="jm-editor"></div>
+	<input type="hidden" name="profiles_json" id="jm-profiles-json" value="">
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_FILETAGS" desc="PLUGIN_JUKEBOXMOODS_FILETAGS_DESC" %]
+	<input type="checkbox" name="pref_scanCustomTags" id="pref_scanCustomTags" value="1" [% IF prefs.pref_scanCustomTags %]checked="checked"[% END %]>
+	<label for="pref_scanCustomTags">[% "PLUGIN_JUKEBOXMOODS_SCAN_LABEL" | string %]</label>
+	[% IF prefs.pref_scanCustomTags %]
+	<div class="jm-hint jm-status">
+		[% IF jm_status.state == 'indexing' %]
+			Reading your files: [% jm_status.done %] of [% jm_status.total %] done.
+		[% ELSE %]
+			[% jm_status.tagCount %] file tags found in [% jm_status.indexed %] tracks.
+			<input type="checkbox" name="reindex" id="jm-reindex" value="1"> <label for="jm-reindex">[% "PLUGIN_JUKEBOXMOODS_REINDEX" | string %]</label>
+		[% END %]
+	</div>
+	[% END %]
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_TOPUP" desc="PLUGIN_JUKEBOXMOODS_TOPUP_DESC" %]
+	<input type="text" class="stdedit" name="pref_tracksPerTopup" value="[% prefs.pref_tracksPerTopup | html %]" size="3">
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_REPEAT" desc="PLUGIN_JUKEBOXMOODS_REPEAT_DESC" %]
+	<input type="checkbox" name="pref_repeatProtect" id="pref_repeatProtect" value="1" [% IF prefs.pref_repeatProtect %]checked="checked"[% END %]>
+	<label for="pref_repeatProtect">[% "PLUGIN_JUKEBOXMOODS_REPEAT_LABEL" | string %]</label>
+	<input type="text" class="stdedit" name="pref_repeatMinutes" value="[% prefs.pref_repeatMinutes | html %]" size="6">
+	[% "PLUGIN_JUKEBOXMOODS_MINUTES" | string %]
+[% END %]
+
+[% WRAPPER setting title="PLUGIN_JUKEBOXMOODS_ANNOUNCE" desc="PLUGIN_JUKEBOXMOODS_ANNOUNCE_DESC" %]
+	<input type="checkbox" name="pref_announceFallback" id="pref_announceFallback" value="1" [% IF prefs.pref_announceFallback %]checked="checked"[% END %]>
+	<label for="pref_announceFallback">[% "PLUGIN_JUKEBOXMOODS_ANNOUNCE_LABEL" | string %]</label>
+[% END %]
+
+<script type="application/json" id="jm-fields">[% jm_fields %]</script>
+<script type="application/json" id="jm-tags">[% jm_tags %]</script>
+<script type="application/json" id="jm-ops">[% jm_ops %]</script>
+<script type="application/json" id="jm-data">[% jm_profiles %]</script>
+
+<script>
+/*
+ * Mood editor. Renders each mood as a card with its rules, exclusions and
+ * fallback, keeps the data in the "moods" array, and after every change
+ * writes the whole array as JSON into the hidden field "profiles_json"
+ * (sync()). Writing on every change, rather than on submit, means it works
+ * however the LMS skin submits the form.
+ *
+ * Data supplied by Settings.pm in <script type="application/json"> blocks:
+ *   jm-fields  library fields        [{name, label, type}]
+ *   jm-tags    file tags found       [{tag, tracks}]
+ *   jm-ops     operators by type     {text: [{op, label}], number: [...], custom: [...]}
+ *   jm-data    the saved moods       [{id, name, match, rules, exclude, fallback}]
+ */
+(function () {
+	function readJson(id, fallback) {
+		try { return JSON.parse(document.getElementById(id).textContent) || fallback; }
+		catch (e) { return fallback; }
+	}
+
+	var fields  = readJson('jm-fields', []);   // library fields
+	var tags    = readJson('jm-tags', []);     // file tags found by the scan: [{tag, tracks}]
+	var ops     = readJson('jm-ops', {});
+	var moods   = readJson('jm-data', []);
+	var root    = document.getElementById('jm-editor');
+	var out     = document.getElementById('jm-profiles-json');
+	var scanBox = document.getElementById('pref_scanCustomTags');
+	if (!root || !out) return;
+
+	var scan = !!(scanBox && scanBox.checked);
+	moods.forEach(function (m) { m.rules = m.rules || []; m.exclude = m.exclude || []; });
+
+	function sync() { out.value = JSON.stringify(moods); }
+
+	// Small DOM helper: h('div', {class: 'x', onclick: fn}, [children])
+	function h(tag, props, children) {
+		var e = document.createElement(tag);
+		Object.keys(props || {}).forEach(function (k) {
+			var v = props[k];
+			if (k === 'text') e.textContent = v;
+			else if (k === 'class') e.className = v;
+			else if (k.indexOf('on') === 0) e.addEventListener(k.slice(2), v);
+			else e.setAttribute(k, v);
+		});
+		(children || []).forEach(function (c) {
+			if (c != null) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+		});
+		return e;
+	}
+	function option(value, label) { return h('option', { value: value, text: label }); }
+
+	// The scan switch only takes effect after saving; until then the
+	// editor shows what the field list will look like.
+	if (scanBox) scanBox.addEventListener('change', function () { scan = scanBox.checked; render(); });
+
+	// ---------------------------------------------------------------- moods
+
+	// Field type decides which operators are offered: text, number or custom (file tag)
+	function fieldType(name) {
+		if (name && name.indexOf('custom:') === 0) return 'custom';
+		for (var i = 0; i < fields.length; i++) if (fields[i].name === name) return fields[i].type;
+		return 'text';
+	}
+	function needsValue(op)  { return op !== 'isset' && op !== 'notset'; }
+	function needsSecond(op) { return op === 'between' || op === 'notbetween'; }
+	function newId() { return 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+	function defaultField() {
+		for (var i = 0; i < fields.length; i++) if (fields[i].name === 'genre') return 'genre';
+		return fields.length ? fields[0].name : 'genre';
+	}
+
+	function hasTag(name) {
+		return tags.some(function (t) { return t.tag === name; });
+	}
+
+	// Field dropdown: library fields, then file tags (only while scanning is on)
+	function fieldSelect(rule) {
+		var s = h('select', { onchange: function () { rule.field = s.value; rule.op = null; render(); } });
+
+		var lib = h('optgroup', { label: 'Library fields' });
+		fields.forEach(function (f) { lib.appendChild(option(f.name, f.label)); });
+		s.appendChild(lib);
+
+		var isCustom = rule.field && rule.field.indexOf('custom:') === 0;
+		var tagName  = isCustom ? rule.field.slice(7) : '';
+		var fileTags = h('optgroup', { label: 'File tags' });
+
+		if (scan && tags.length) {
+			tags.forEach(function (t) { fileTags.appendChild(option('custom:' + t.tag, t.tag)); });
+		}
+		if (isCustom && !(scan && hasTag(tagName))) {
+			fileTags.appendChild(option(rule.field, tagName + (scan ? ' (not found in your files)' : ' (scanning is off)')));
+		}
+		if (!scan || !tags.length) {
+			var hint = option('', scan
+				? 'No file tags yet: save, let the scan finish, then reload'
+				: 'Switch on "Scan additional tags" to use file tags');
+			hint.disabled = true;
+			fileTags.appendChild(hint);
+		}
+		s.appendChild(fileTags);
+
+		s.value = rule.field;
+		return s;
+	}
+
+	// One rule row: field, operator, value(s) and a Remove button
+	function renderRule(list, idx) {
+		var rule = list[idx];
+		var opList = ops[fieldType(rule.field)] || ops.text || [];
+		if (!opList.some(function (o) { return o.op === rule.op; })) rule.op = opList.length ? opList[0].op : 'is';
+
+		var row = h('div', { class: 'jm-rule' });
+		row.appendChild(fieldSelect(rule));
+
+		var os = h('select', { onchange: function () { rule.op = os.value; render(); } });
+		opList.forEach(function (o) { os.appendChild(option(o.op, o.label)); });
+		os.value = rule.op;
+		row.appendChild(os);
+
+		if (needsValue(rule.op)) {
+			var v1 = h('input', { type: 'text', class: 'jm-value', placeholder: 'value' });
+			v1.value = rule.value || '';
+			v1.addEventListener('input', function () { rule.value = v1.value; sync(); });
+			row.appendChild(v1);
+			if (needsSecond(rule.op)) {
+				row.appendChild(document.createTextNode('and'));
+				var v2 = h('input', { type: 'text', class: 'jm-value', placeholder: 'value' });
+				v2.value = rule.value2 || '';
+				v2.addEventListener('input', function () { rule.value2 = v2.value; sync(); });
+				row.appendChild(v2);
+			}
+		}
+
+		row.appendChild(h('button', { type: 'button', text: 'Remove', onclick: function () { list.splice(idx, 1); render(); } }));
+		return row;
+	}
+
+	function renderRuleList(list, addLabel) {
+		var box = h('div', { class: 'jm-rules' });
+		list.forEach(function (r, i) { box.appendChild(renderRule(list, i)); });
+		box.appendChild(h('button', { type: 'button', text: addLabel, onclick: function () {
+			list.push({ field: defaultField(), op: null, value: '' });
+			render();
+		} }));
+		return box;
+	}
+
+	function move(i, d) {
+		var j = i + d;
+		if (j < 0 || j >= moods.length) return;
+		var t = moods[i]; moods[i] = moods[j]; moods[j] = t;
+		render();
+	}
+
+	function duplicate(i) {
+		var c = JSON.parse(JSON.stringify(moods[i]));
+		c.id = newId();
+		c.name = (c.name || 'Mood') + ' (copy)';
+		moods.splice(i + 1, 0, c);
+		render();
+	}
+
+	function remove(i) {
+		if (!window.confirm('Delete the mood "' + (moods[i].name || '') + '"?')) return;
+		var id = moods[i].id;
+		moods.splice(i, 1);
+		moods.forEach(function (m) { if (m.fallback === id) m.fallback = ''; });
+		render();
+	}
+
+	// Ask the server (JSON-RPC: jukeboxmoods count) how many tracks the unsaved mood matches
+	function countTracks(m, target) {
+		target.textContent = 'Counting...';
+		var xhr = new XMLHttpRequest();
+		xhr.open('POST', '/jsonrpc.js');
+		xhr.setRequestHeader('Content-Type', 'application/json');
+		xhr.onload = function () {
+			try {
+				var r = JSON.parse(xhr.responseText).result || {};
+				if (r.count == null) throw new Error('no count');
+				var t = r.count + ' tracks match';
+				if (r.available != null && r.available != r.count) t += ', ' + r.available + ' available now (repeat protection)';
+				if (r.indexing) t += '. The file tag index is still building, so this may rise.';
+				target.textContent = t + '.';
+			} catch (e) {
+				target.textContent = 'Could not count. Check the server log.';
+			}
+		};
+		xhr.onerror = function () { target.textContent = 'Could not reach the server.'; };
+		xhr.send(JSON.stringify({ id: 1, method: 'slim.request',
+			params: ['', ['jukeboxmoods', 'count', 'profile:' + JSON.stringify(m)]] }));
+	}
+
+	// One mood card
+	function renderMood(m, i) {
+		var card = h('div', { class: 'jm-mood' });
+
+		var name = h('input', { type: 'text', class: 'jm-name' });
+		name.value = m.name || '';
+		name.addEventListener('input', function () { m.name = name.value; sync(); });
+		name.addEventListener('change', render);
+
+		card.appendChild(h('div', { class: 'jm-head' }, [
+			name,
+			h('button', { type: 'button', text: 'Up',        onclick: function () { move(i, -1); } }),
+			h('button', { type: 'button', text: 'Down',      onclick: function () { move(i, 1); } }),
+			h('button', { type: 'button', text: 'Duplicate', onclick: function () { duplicate(i); } }),
+			h('button', { type: 'button', text: 'Delete',    onclick: function () { remove(i); } })
+		]));
+
+		var matchSel = h('select', { onchange: function () { m.match = matchSel.value; sync(); } }, [
+			option('all', 'all of these rules'),
+			option('any', 'any of these rules')
+		]);
+		matchSel.value = m.match === 'any' ? 'any' : 'all';
+
+		card.appendChild(h('div', { class: 'jm-line' }, ['Include tracks matching ', matchSel, ' (no rules means the whole library):']));
+		card.appendChild(renderRuleList(m.rules, 'Add rule'));
+		card.appendChild(h('div', { class: 'jm-line' }, ['Always leave out tracks matching any of these:']));
+		card.appendChild(renderRuleList(m.exclude, 'Add exclusion'));
+
+		// Fallback: another mood's id, or one of the special values handled in
+		// pickForClient (Plugin.pm). The help bubble on "Moods" explains each.
+		var fb = h('select', { onchange: function () { m.fallback = fb.value; sync(); } });
+		var also = h('optgroup', { label: 'Keep going' });
+		also.appendChild(option('__chosen__',  "Don't Stop the Music"));
+		also.appendChild(option('__repeat__',  'Restart Current Mood'));
+		also.appendChild(option('__songmix__', 'Song Mix'));
+		also.appendChild(option('__stop__',    'Do Nothing'));
+		fb.appendChild(also);
+		var others = moods.filter(function (o) { return o !== m; });
+		if (others.length) {
+			var grp = h('optgroup', { label: 'Switch to mood' });
+			others.forEach(function (o) { grp.appendChild(option(o.id, o.name || '(unnamed)')); });
+			fb.appendChild(grp);
+		}
+		fb.value = m.fallback || '__chosen__';
+		if (fb.value !== m.fallback) { m.fallback = '__chosen__'; fb.value = '__chosen__'; }
+		card.appendChild(h('div', { class: 'jm-line' }, ['When this mood runs dry: ', fb]));
+
+		var result = h('span', { class: 'jm-result' });
+		card.appendChild(h('div', { class: 'jm-line' }, [
+			h('button', { type: 'button', text: 'Count matching tracks', onclick: function () { countTracks(m, result); } }),
+			' ', result
+		]));
+
+		return card;
+	}
+
+	// Redraw the whole editor (simple and fast enough for a handful of moods)
+	function render() {
+		root.innerHTML = '';
+		if (!moods.length) root.appendChild(h('p', { text: 'No moods yet. Add one to get started.' }));
+		moods.forEach(function (m, i) { root.appendChild(renderMood(m, i)); });
+		root.appendChild(h('button', { type: 'button', text: 'Add mood', onclick: function () {
+			moods.push({ id: newId(), name: 'New mood', match: 'all', rules: [], exclude: [], fallback: '__chosen__' });
+			render();
+		} }));
+		root.appendChild(h('p', { class: 'jm-hint', text: 'Changes are kept when you save this page.' }));
+		sync();
+	}
+
+	render();
+})();
+</script>
+
+[% PROCESS settings/footer.html %]

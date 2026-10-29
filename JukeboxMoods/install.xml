@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<extension>
+	<id>a4f7c2e1-6b3d-4c8e-9f2a-5d1e7b3c9a40</id>
+	<name>PLUGIN_JUKEBOXMOODS</name>
+	<module>Plugins::JukeboxMoods::Plugin</module>
+	<version>0.1.7</version>
+	<description>PLUGIN_JUKEBOXMOODS_DESC</description>
+	<creator>Dennis Swanepoel</creator>
+	<defaultState>enabled</defaultState>
+	<optionsURL>plugins/JukeboxMoods/settings/basic.html</optionsURL>
+	<type>2</type>
+	<targetApplication>
+		<id>SlimServer</id>
+		<minVersion>8.0</minVersion>
+		<maxVersion>*</maxVersion>
+	</targetApplication>
+</extension>

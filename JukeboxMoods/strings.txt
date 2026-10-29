@@ -1,0 +1,95 @@
+PLUGIN_JUKEBOXMOODS
+	EN	Jukebox Moods
+
+PLUGIN_JUKEBOXMOODS_DESC
+	EN	Tag-based mood profiles that keep the music going when the queue runs out. Inspired by Silverjuke's AutoPlay music selections.
+
+PLUGIN_RANDOM_JUKEBOXMOODS
+	EN	Jukebox Moods (active mood)
+
+PLUGIN_JUKEBOXMOODS_NO_PLAYER
+	EN	Select a player to choose a mood.
+
+PLUGIN_JUKEBOXMOODS_NO_MOODS
+	EN	No moods yet. Create them in the Jukebox Moods plugin settings.
+
+PLUGIN_JUKEBOXMOODS_ACTIVE_IS
+	EN	Active mood: %s
+
+PLUGIN_JUKEBOXMOODS_PICKED
+	EN	(you picked %s)
+
+PLUGIN_JUKEBOXMOODS_ACTIVE_MARK
+	EN	(active)
+
+PLUGIN_JUKEBOXMOODS_DSTM_TIP
+	EN	Tip: set Don't Stop The Music to "Jukebox Moods" for this player.
+
+PLUGIN_JUKEBOXMOODS_SWITCH_NOW
+	EN	Switch now (replace queued mood tracks)
+
+PLUGIN_JUKEBOXMOODS_SWITCH_NEXT
+	EN	Switch after the current queue
+
+PLUGIN_JUKEBOXMOODS_PLAY_NOW
+	EN	Clear queue and play this mood
+
+PLUGIN_JUKEBOXMOODS_SWITCHED
+	EN	Mood switched to %s
+
+PLUGIN_JUKEBOXMOODS_NOTHING
+	EN	No playable tracks for this mood or its fallbacks.
+
+PLUGIN_JUKEBOXMOODS_FELLBACK
+	EN	Mood ran dry, switched to %s
+
+PLUGIN_JUKEBOXMOODS_START
+	EN	Getting started
+
+PLUGIN_JUKEBOXMOODS_START_DESC
+	EN	Jukebox Moods keeps the music going when a player's queue runs out, using tracks from the mood you choose. It works through LMS's Don't Stop The Music feature, so it has to be switched on for each player. Follow these steps once after installing.
+
+PLUGIN_JUKEBOXMOODS_MOODS
+	EN	Moods
+
+PLUGIN_JUKEBOXMOODS_MOODS_DESC
+	EN	Each mood is a set of rules that decides which tracks can be picked, using the fields LMS already knows plus your own file tags if Additional file tags is switched on. "When this mood runs dry" decides what happens once all its tracks have played. A mood name switches to that mood. Don't Stop the Music goes back to the mood you picked in My Apps and keeps playing it, with repeats if needed, so the music never stops. Restart Current Mood replays the mood that is playing, allowing repeats. Song Mix plays random tracks from your whole library. Do Nothing adds nothing more, so playback stops when the queue ends.
+
+PLUGIN_JUKEBOXMOODS_TOPUP
+	EN	Tracks per top-up
+
+PLUGIN_JUKEBOXMOODS_TOPUP_DESC
+	EN	How many tracks to add each time Don't Stop The Music asks for more. LMS asks whenever fewer than two tracks are lined up after the one it is loading, so you will usually see two or three upcoming tracks. Fewer tracks per top-up means mood switches take effect sooner.
+
+PLUGIN_JUKEBOXMOODS_REPEAT
+	EN	Repeat protection
+
+PLUGIN_JUKEBOXMOODS_REPEAT_DESC
+	EN	Skip tracks that were played (or queued by this plugin) recently, including in earlier sessions. Set in minutes: for example 60 for an hour, 1440 for a day. A short window such as 1 minute is handy for testing. With this on, a mood can run dry and hand over to its fallback mood.
+
+PLUGIN_JUKEBOXMOODS_REPEAT_LABEL
+	EN	Don't replay a track within
+
+PLUGIN_JUKEBOXMOODS_MINUTES
+	EN	minutes
+
+PLUGIN_JUKEBOXMOODS_ANNOUNCE
+	EN	Fallback announcement
+
+PLUGIN_JUKEBOXMOODS_ANNOUNCE_DESC
+	EN	Show a brief message on the player when a mood runs dry and the fallback mood takes over.
+
+PLUGIN_JUKEBOXMOODS_ANNOUNCE_LABEL
+	EN	Announce mood changes caused by a fallback
+
+PLUGIN_JUKEBOXMOODS_FILETAGS
+	EN	Additional file tags
+
+PLUGIN_JUKEBOXMOODS_FILETAGS_DESC
+	EN	Off: mood rules can use the fields LMS already stores, such as artist, genre, year and rating. On: after each library scan the plugin also reads every extra tag it finds in your music files (for example MOOD, ENERGY or GROUPING) and adds them to every mood's rule list under File tags. The first scan of a large library can take several minutes; reload this page when it has finished. For tags holding several values, such as "Chilled;Summer", use the "contains" rule.
+
+PLUGIN_JUKEBOXMOODS_SCAN_LABEL
+	EN	Scan additional tags from my music files
+
+PLUGIN_JUKEBOXMOODS_REINDEX
+	EN	Rebuild the whole tag index when I save
