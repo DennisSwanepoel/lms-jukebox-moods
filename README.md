@@ -83,7 +83,7 @@ JukeboxMoods/                 the plugin (this folder is what LMS loads)
   TagIndex.pm                 reads extra file tags into its own SQLite index
   Settings.pm                 settings page handler
   HTML/EN/plugins/JukeboxMoods/settings/basic.html   settings page and mood editor
-build.sh                      builds the plugin zip and repo.xml
+build.ps1, build.sh           build the plugin zip and repo.xml (Windows / Linux, macOS)
 CHANGELOG.md, LICENSE
 ```
 
@@ -91,11 +91,16 @@ Each module starts with a comment block explaining its role, and every function 
 
 ## Building and releasing
 
-`build.sh` needs a shell with `zip` and `sha1sum` (Linux, macOS or WSL):
+Use `build.ps1` on Windows or `build.sh` on Linux, macOS or WSL. Both create `JukeboxMoods-<version>.zip` and a matching `repo.xml`.
 
 1. Raise `<version>` in `JukeboxMoods/install.xml` and add an entry to `CHANGELOG.md`.
-2. Run `./build.sh <base-url>`, where `<base-url>` is where the zip will be downloadable, for example a GitHub release URL.
-3. Publish `JukeboxMoods-<version>.zip` at that URL and commit or publish `repo.xml`. LMS offers the update on its next check.
+2. Build, pointing at the GitHub release the zip will be attached to:
+   - Windows: `powershell -ExecutionPolicy Bypass -File build.ps1 -BaseUrl https://github.com/<user>/<repo>/releases/download/v<version> -Homepage https://github.com/<user>/<repo>`
+   - Linux/macOS: `./build.sh https://github.com/<user>/<repo>/releases/download/v<version> https://github.com/<user>/<repo>`
+3. Create a GitHub release with tag `v<version>` and attach the zip.
+4. Commit the new `repo.xml` to the main branch. LMS offers the update on its next check.
+
+The repository URL users add in LMS is `https://raw.githubusercontent.com/<user>/<repo>/main/repo.xml`.
 
 The built zip and `repo.xml` are listed in `.gitignore`; publish them as release assets or commit them deliberately.
 
